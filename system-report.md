@@ -15,6 +15,7 @@
 - Regenerated the production bundle and refreshed the product image set inside the repository.
 - Replaced the fragile build step with a local bundle generator that inlines the app data and updates cache-busting timestamps automatically.
 - Cleaned the admin unlock flow so the overlay is removed from the DOM after successful login.
+- Rebuilt the product image library from the provided `pdf_images/` assets and standardized the result into square local menu images.
 
 ## Files Modified
 - `products.js`
@@ -28,6 +29,7 @@
 ## Files New
 - `styles.css`
 - `system-report.md`
+- `scripts/refresh-product-images.ps1`
 
 ## Notes
 - The project now prefers local assets for the built-in menu catalog and supports custom images for admin-created products.
