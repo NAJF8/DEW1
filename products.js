@@ -3,6 +3,8 @@ import { seedProducts } from './products-data.js';
 
 const STORAGE_KEY = 'dew.products.v1';
 const ADMIN_SESSION_KEY = 'dew.admin.unlocked.v1';
+const ADMIN_CODEBOOK_KEY = 'dew.admin.codebook.v1';
+const BRANDING_KEY = 'dew.branding.v1';
 const PRODUCT_IMAGE_DIR = './assets/images/products';
 const PAGE_IMAGE_DIR = './assets/images/pages';
 const IDLE_LOGOUT_TIMER_KEY = 'dew.admin.idle.timer.v1';
@@ -86,6 +88,19 @@ const DEFAULT_EXTRA_PRODUCTS = [
 
 const DEFAULT_POPULAR_NAMES = ['Donut', 'Croissant', 'Iced Coffee'];
 
+const DEFAULT_BRANDING = {
+  logoText: 'DEW',
+  brandName: 'DEW Coffee',
+  brandSub: 'Coffee & More',
+  logoImage: '',
+  heroImage: '',
+  heroTitle: 'DEW',
+  heroCopy: '',
+  ribbon: '',
+  kicker: '',
+  addressLines: ['النجف الأشرف', 'حي الأمير', 'شارع كلية التربية للبنات'],
+};
+
 const esc = (value) =>
   String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -154,6 +169,122 @@ function setAdminSessionUnlocked(value, ttl = ADMIN_CONFIG.sessionTtlMs) {
   } catch {
     return;
   }
+}
+
+function seedAdminCodebook() {
+  const seeds = Array.isArray(ADMIN_CONFIG.accessCodeHashes) && ADMIN_CONFIG.accessCodeHashes.length
+    ? ADMIN_CONFIG.accessCodeHashes
+    : [ADMIN_CONFIG.passwordHash];
+  const unique = [];
+  for (const hash of seeds) {
+    if (typeof hash !== 'string' || !hash) continue;
+    if (unique.some((entry) => entry.hash === hash)) continue;
+    unique.push({
+      label: unique.length === 0 ? 'Primary' : `Extra ${unique.length}`,
+      hash,
+      createdAt: Date.now() + unique.length,
+    });
+  }
+  return unique;
+}
+
+function normalizeAdminCodebook(entries) {
+  const normalized = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const hash = String(entry.hash || '').trim();
+    if (!hash || normalized.some((item) => item.hash === hash)) continue;
+    normalized.push({
+      label: String(entry.label || '').trim() || `Code ${normalized.length + 1}`,
+      hash,
+      createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now(),
+    });
+  }
+  return normalized.length ? normalized : seedAdminCodebook();
+}
+
+function loadAdminCodebook() {
+  if (typeof window === 'undefined') return seedAdminCodebook();
+  try {
+    const raw = window.localStorage.getItem(ADMIN_CODEBOOK_KEY);
+    if (!raw) {
+      const fresh = seedAdminCodebook();
+      window.localStorage.setItem(ADMIN_CODEBOOK_KEY, JSON.stringify(fresh));
+      return fresh;
+    }
+    return normalizeAdminCodebook(JSON.parse(raw));
+  } catch {
+    return seedAdminCodebook();
+  }
+}
+
+function saveAdminCodebook(entries) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(ADMIN_CODEBOOK_KEY, JSON.stringify(normalizeAdminCodebook(entries)));
+}
+
+function addAdminCode(code, label = '') {
+  const value = String(code || '').trim();
+  if (!value) return false;
+  const hash = sha256HexSync(`${ADMIN_CONFIG.salt}:${value}`);
+  const codebook = loadAdminCodebook();
+  if (codebook.some((entry) => entry.hash === hash)) return false;
+  codebook.unshift({
+    label: String(label || '').trim() || `Code ${codebook.length + 1}`,
+    hash,
+    createdAt: Date.now(),
+  });
+  saveAdminCodebook(codebook);
+  return true;
+}
+
+function removeAdminCode(hash) {
+  const codebook = loadAdminCodebook().filter((entry) => entry.hash !== hash);
+  saveAdminCodebook(codebook);
+  return codebook;
+}
+
+function normalizeBranding(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const lines = Array.isArray(source.addressLines) ? source.addressLines : DEFAULT_BRANDING.addressLines;
+  return {
+    logoText: String(source.logoText || DEFAULT_BRANDING.logoText).trim(),
+    brandName: String(source.brandName || DEFAULT_BRANDING.brandName).trim(),
+    brandSub: String(source.brandSub || DEFAULT_BRANDING.brandSub).trim(),
+    logoImage: String(source.logoImage || '').trim(),
+    heroImage: String(source.heroImage || '').trim(),
+    heroTitle: String(source.heroTitle || DEFAULT_BRANDING.heroTitle).trim(),
+    heroCopy: String(source.heroCopy || '').trim(),
+    ribbon: String(source.ribbon || '').trim(),
+    kicker: String(source.kicker || '').trim(),
+    addressLines: lines.map((line) => String(line || '').trim()).filter(Boolean).slice(0, 3),
+  };
+}
+
+function loadBranding() {
+  if (typeof window === 'undefined') return normalizeBranding(DEFAULT_BRANDING);
+  try {
+    const raw = window.localStorage.getItem(BRANDING_KEY);
+    if (!raw) {
+      const fresh = normalizeBranding(DEFAULT_BRANDING);
+      window.localStorage.setItem(BRANDING_KEY, JSON.stringify(fresh));
+      return fresh;
+    }
+    return normalizeBranding(JSON.parse(raw));
+  } catch {
+    return normalizeBranding(DEFAULT_BRANDING);
+  }
+}
+
+function saveBranding(branding) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(BRANDING_KEY, JSON.stringify(normalizeBranding(branding)));
+}
+
+function resetBranding() {
+  const fresh = normalizeBranding(DEFAULT_BRANDING);
+  saveBranding(fresh);
+  return fresh;
 }
 
 const SHA256_K = [
@@ -252,7 +383,8 @@ async function hashPassword(value) {
 }
 
 async function verifyAdminPassword(value) {
-  return (await hashPassword(value)) === ADMIN_CONFIG.passwordHash;
+  const hash = await hashPassword(value);
+  return loadAdminCodebook().some((entry) => entry.hash === hash);
 }
 
 function markActivity() {
@@ -564,34 +696,40 @@ function popularProducts(products) {
 }
 
 function buildHeader() {
+  const branding = loadBranding();
+  const logo = branding.logoImage
+    ? `<img class="brand-logo-image" src="${esc(versionAssetPath(branding.logoImage))}" alt="${esc(branding.brandName)}">`
+    : `<div class="brand-mark">${esc(branding.logoText || DEFAULT_BRANDING.logoText)}</div>`;
   return `
     <header class="site-header">
       <div class="brand">
-        <div class="brand-mark">DEW</div>
+        ${logo}
         <div>
-          <div class="brand-name">DEW Coffee</div>
-          <div class="brand-sub">Coffee & More</div>
+          <div class="brand-name">${esc(branding.brandName || DEFAULT_BRANDING.brandName)}</div>
+          ${branding.brandSub ? `<div class="brand-sub">${esc(branding.brandSub)}</div>` : ''}
         </div>
       </div>
-      <div class="brand-ribbon">Fresh menu, local edits, instant updates</div>
+      ${branding.ribbon ? `<div class="brand-ribbon">${esc(branding.ribbon)}</div>` : ''}
     </header>
   `;
 }
 
 function buildHero(products) {
+  const branding = loadBranding();
   const total = products.length;
   const sections = getSections().length;
   const popularCount = popularProducts(products).length;
+  const addressLines = branding.addressLines.length ? branding.addressLines : DEFAULT_BRANDING.addressLines;
+  const heroImage = branding.heroImage ? `<div class="hero-image"><img src="${esc(versionAssetPath(branding.heroImage))}" alt="${esc(branding.brandName || branding.heroTitle)}" loading="lazy" decoding="async"></div>` : '';
   return `
     <section class="hero">
-      <div class="hero-kicker">Since 2024</div>
-      <h1 class="hero-title">DEW</h1>
+      ${branding.kicker ? `<div class="hero-kicker">${esc(branding.kicker)}</div>` : ''}
+      ${heroImage}
+      <h1 class="hero-title">${esc(branding.heroTitle || branding.brandName || DEFAULT_BRANDING.heroTitle)}</h1>
       <div class="hero-address">
-        <span>النجف الأشرف</span>
-        <span>حي الأمير</span>
-        <span>شارع كلية التربية للبنات</span>
+        ${addressLines.map((line) => `<span>${esc(line)}</span>`).join('')}
       </div>
-      <p class="hero-copy">قهوة ومشروبات وحلويات بطابع DEW المميز، مع منيو يتحدث تلقائياً من لوحة الإدارة.</p>
+      ${branding.heroCopy ? `<p class="hero-copy">${esc(branding.heroCopy)}</p>` : ''}
       <div class="hero-stats">
         <div class="stat-chip">
           <strong>${total}</strong>
@@ -668,6 +806,10 @@ function buildSectionSection(section, products) {
 
 export function renderMenu(root) {
   installSecurityGuards();
+  if (typeof document !== 'undefined') {
+    const branding = loadBranding();
+    document.title = branding.brandName || 'DEW Coffee';
+  }
   const products = loadProducts();
   const sections = getSections();
   const markup = `
@@ -689,7 +831,7 @@ export function renderMenu(root) {
   if (typeof window !== 'undefined' && !window.__dewMenuStorageSync) {
     window.__dewMenuStorageSync = true;
     window.addEventListener('storage', (event) => {
-      if (event.key !== STORAGE_KEY) return;
+      if (event.key !== STORAGE_KEY && event.key !== BRANDING_KEY) return;
       const app = document.getElementById('app');
       if (app) renderMenu(app);
     });
@@ -923,6 +1065,109 @@ function adminShell() {
                 <button type="button" class="ghost-btn" id="closeSession">Lock admin</button>
               </div>
             </div>
+
+            <div class="card panel branding-panel" id="branding">
+              <div class="panel-head">
+                <div>
+                  <h3>Branding</h3>
+                  <p>Edit logo, name, hero text, and address lines.</p>
+                </div>
+                <div class="editor-id" id="brandingState">Brand defaults</div>
+              </div>
+              <div class="preview-shell">
+                <div class="preview-frame">
+                  <img id="brandingPreview" alt="Brand preview" src="${versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`)}">
+                </div>
+                <div class="preview-meta">
+                  <strong>Brand preview</strong>
+                  <span>Use a file upload or paste an image URL for the logo or hero image.</span>
+                </div>
+              </div>
+              <label>
+                Logo text
+                <input id="brandLogoText" type="text" placeholder="DEW">
+              </label>
+              <label>
+                Site name
+                <input id="brandName" type="text" placeholder="DEW Coffee">
+              </label>
+              <label>
+                Site subtitle
+                <input id="brandSub" type="text" placeholder="Coffee & More">
+              </label>
+              <label>
+                Hero title
+                <input id="heroTitle" type="text" placeholder="DEW">
+              </label>
+              <label>
+                Hero text
+                <input id="heroCopy" type="text" placeholder="">
+              </label>
+              <label>
+                Top ribbon
+                <input id="brandRibbon" type="text" placeholder="">
+              </label>
+              <label>
+                Hero kicker
+                <input id="brandKicker" type="text" placeholder="">
+              </label>
+              <label>
+                Address line 1
+                <input id="address1" type="text" placeholder="النجف الأشرف">
+              </label>
+              <label>
+                Address line 2
+                <input id="address2" type="text" placeholder="حي الأمير">
+              </label>
+              <label>
+                Address line 3
+                <input id="address3" type="text" placeholder="شارع كلية التربية للبنات">
+              </label>
+              <label>
+                Logo image URL
+                <input id="brandLogoImage" type="text" placeholder="Paste image URL or upload below">
+              </label>
+              <label>
+                Upload logo image
+                <input id="brandLogoFile" type="file" accept="image/*">
+              </label>
+              <label>
+                Hero image URL
+                <input id="brandHeroImage" type="text" placeholder="Paste image URL or upload below">
+              </label>
+              <label>
+                Upload hero image
+                <input id="brandHeroFile" type="file" accept="image/*">
+              </label>
+              <div class="form-actions">
+                <button type="button" class="primary-btn" id="saveBranding">Save Branding</button>
+                <button type="button" class="ghost-btn" id="resetBranding">Reset Branding</button>
+              </div>
+            </div>
+
+            <div class="card panel codes-panel" id="codes">
+              <div class="panel-head">
+                <div>
+                  <h3>Access Codes</h3>
+                  <p>Primary code plus any extra codes you want to add.</p>
+                </div>
+                <div class="editor-id" id="codesState">2 active codes</div>
+              </div>
+              <div class="code-form">
+                <label>
+                  Code label
+                  <input id="newCodeLabel" type="text" placeholder="Backup code">
+                </label>
+                <label>
+                  New access code
+                  <input id="newCodeValue" type="password" placeholder="Type a new code">
+                </label>
+                <div class="form-actions">
+                  <button type="button" class="primary-btn" id="addAccessCode">Add Code</button>
+                </div>
+              </div>
+              <div id="codeList" class="code-list"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -932,6 +1177,9 @@ function adminShell() {
 
 export function renderAdmin(root) {
   installSecurityGuards();
+  if (typeof document !== 'undefined') {
+    document.title = 'DEW Admin';
+  }
   const mountApp = () => {
     root.innerHTML = adminShell();
     initAdminApp(root);
@@ -1017,6 +1265,29 @@ function initAdminApp(app) {
   const imagePreview = app.querySelector('#imagePreview');
   const editorState = app.querySelector('#editorState');
   const popularList = app.querySelector('#popularList');
+  const brandingPreview = app.querySelector('#brandingPreview');
+  const brandingState = app.querySelector('#brandingState');
+  const brandLogoText = app.querySelector('#brandLogoText');
+  const brandName = app.querySelector('#brandName');
+  const brandSub = app.querySelector('#brandSub');
+  const heroTitle = app.querySelector('#heroTitle');
+  const heroCopy = app.querySelector('#heroCopy');
+  const brandRibbon = app.querySelector('#brandRibbon');
+  const brandKicker = app.querySelector('#brandKicker');
+  const address1 = app.querySelector('#address1');
+  const address2 = app.querySelector('#address2');
+  const address3 = app.querySelector('#address3');
+  const brandLogoImage = app.querySelector('#brandLogoImage');
+  const brandLogoFile = app.querySelector('#brandLogoFile');
+  const brandHeroImage = app.querySelector('#brandHeroImage');
+  const brandHeroFile = app.querySelector('#brandHeroFile');
+  const saveBrandingButton = app.querySelector('#saveBranding');
+  const resetBrandingButton = app.querySelector('#resetBranding');
+  const newCodeLabel = app.querySelector('#newCodeLabel');
+  const newCodeValue = app.querySelector('#newCodeValue');
+  const addAccessCodeButton = app.querySelector('#addAccessCode');
+  const codeList = app.querySelector('#codeList');
+  const codesState = app.querySelector('#codesState');
   const totalStat = app.querySelector('#adminTotal');
   const popularStat = app.querySelector('#adminPopular');
   const customStat = app.querySelector('#adminCustom');
@@ -1029,13 +1300,18 @@ function initAdminApp(app) {
   sectionFilter.innerHTML += getSections()
     .map((section) => `<option value="${esc(section.id)}">${esc(section.ar)}</option>`)
     .join('');
+  syncBrandForm();
 
   let products = loadProducts();
+  let branding = loadBranding();
+  let codebook = loadAdminCodebook();
   let draftImage = '';
   let selectedSectionFilter = '';
 
   function refresh() {
     products = loadProducts();
+    branding = loadBranding();
+    codebook = loadAdminCodebook();
     const query = search.value.trim().toLowerCase();
     const filtered = products.filter((product) => {
       const hay = `${product.nameAr} ${product.nameEn} ${product.section}`.toLowerCase();
@@ -1057,6 +1333,51 @@ function initAdminApp(app) {
         `
       )
       .join('');
+    renderBrandingState();
+    renderCodebook();
+  }
+
+  function renderBrandingState() {
+    if (!brandingState) return;
+    brandingState.textContent = branding.brandName || branding.heroTitle || 'Brand defaults';
+    if (brandingPreview) {
+      const previewSource = branding.heroImage || branding.logoImage || `${PAGE_IMAGE_DIR}/page-44.jpg`;
+      brandingPreview.src = versionAssetPath(previewSource);
+    }
+  }
+
+  function renderCodebook() {
+    if (!codeList || !codesState) return;
+    codesState.textContent = `${codebook.length} active code${codebook.length === 1 ? '' : 's'}`;
+    codeList.innerHTML = codebook
+      .map(
+        (entry, index) => `
+          <div class="code-item">
+            <div>
+              <strong>${esc(entry.label || `Code ${index + 1}`)}</strong>
+              <small>${esc(entry.hash.slice(0, 12))}…</small>
+            </div>
+            <button type="button" class="ghost-btn danger" data-code-hash="${esc(entry.hash)}">Remove</button>
+          </div>
+        `
+      )
+      .join('');
+  }
+
+  function syncBrandForm() {
+    brandLogoText.value = branding.logoText || '';
+    brandName.value = branding.brandName || '';
+    brandSub.value = branding.brandSub || '';
+    heroTitle.value = branding.heroTitle || '';
+    heroCopy.value = branding.heroCopy || '';
+    brandRibbon.value = branding.ribbon || '';
+    brandKicker.value = branding.kicker || '';
+    address1.value = branding.addressLines[0] || '';
+    address2.value = branding.addressLines[1] || '';
+    address3.value = branding.addressLines[2] || '';
+    brandLogoImage.value = branding.logoImage || '';
+    brandHeroImage.value = branding.heroImage || '';
+    renderBrandingState();
   }
 
   function clearDraft() {
@@ -1168,6 +1489,46 @@ function initAdminApp(app) {
     window.location.reload();
   });
 
+  saveBrandingButton.addEventListener('click', () => {
+    branding = normalizeBranding({
+      logoText: brandLogoText.value,
+      brandName: brandName.value,
+      brandSub: brandSub.value,
+      logoImage: brandLogoImage.value,
+      heroImage: brandHeroImage.value,
+      heroTitle: heroTitle.value,
+      heroCopy: heroCopy.value,
+      ribbon: brandRibbon.value,
+      kicker: brandKicker.value,
+      addressLines: [address1.value, address2.value, address3.value],
+    });
+    saveBranding(branding);
+    renderBrandingState();
+  });
+
+  resetBrandingButton.addEventListener('click', () => {
+    branding = resetBranding();
+    syncBrandForm();
+  });
+
+  addAccessCodeButton.addEventListener('click', () => {
+    if (addAdminCode(newCodeValue.value, newCodeLabel.value)) {
+      codebook = loadAdminCodebook();
+      newCodeValue.value = '';
+      newCodeLabel.value = '';
+      renderCodebook();
+    }
+  });
+
+  codeList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-code-hash]');
+    if (!button) return;
+    if (codebook.length <= 1) return;
+    removeAdminCode(button.dataset.codeHash);
+    codebook = loadAdminCodebook();
+    renderCodebook();
+  });
+
   file.addEventListener('change', async () => {
     const selected = file.files && file.files[0];
     if (!selected) return;
@@ -1187,6 +1548,28 @@ function initAdminApp(app) {
       clearImage.checked = false;
       imagePreview.src = draftImage;
     }
+  });
+
+  brandLogoFile.addEventListener('change', async () => {
+    const selected = brandLogoFile.files && brandLogoFile.files[0];
+    if (!selected) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      brandLogoImage.value = String(reader.result || '');
+      brandingPreview.src = brandLogoImage.value || versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`);
+    };
+    reader.readAsDataURL(selected);
+  });
+
+  brandHeroFile.addEventListener('change', async () => {
+    const selected = brandHeroFile.files && brandHeroFile.files[0];
+    if (!selected) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      brandHeroImage.value = String(reader.result || '');
+      brandingPreview.src = brandHeroImage.value || versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`);
+    };
+    reader.readAsDataURL(selected);
   });
 
   clearImage.addEventListener('change', () => {
