@@ -1,51 +1,53 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { build } from 'esbuild';
-import JavaScriptObfuscator from 'javascript-obfuscator';
+import { minify } from 'terser';
 
 const root = process.cwd();
 const distDir = path.join(root, 'assets', 'dist');
+const version = String(Date.now());
 
 await fs.mkdir(distDir, { recursive: true });
 
-await build({
-  entryPoints: [path.join(root, 'products.js')],
-  outfile: path.join(distDir, 'products.js'),
-  bundle: true,
-  format: 'esm',
-  platform: 'browser',
-  target: ['es2020'],
-  minify: true,
-  sourcemap: false,
-  legalComments: 'none',
-  treeShaking: true,
+const configSource = await fs.readFile(path.join(root, 'config', 'admin.config.js'), 'utf8');
+const dataSource = await fs.readFile(path.join(root, 'products-data.js'), 'utf8');
+const appSource = await fs.readFile(path.join(root, 'products.js'), 'utf8');
+
+function stripModuleSyntax(source) {
+  return source
+    .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
+    .replace(/export\s+(?=function|const|let|class)/g, '')
+    .replace(/export\s*\{[\s\S]*?\};?/g, '');
+}
+
+const bundle = [
+  '(function(){',
+  stripModuleSyntax(configSource),
+  stripModuleSyntax(dataSource),
+  stripModuleSyntax(appSource).replace(/^\s*const\s+root\s*=\s*process\.cwd\(\);\s*$/gm, ''),
+  'window.DEW = { slugify, loadProducts, saveProducts, resetProducts, upsertProduct, deleteProduct, getSections, renderMenu, renderAdmin };',
+  '})();',
+].join('\n');
+
+const minified = await minify(bundle, {
+  compress: {
+    passes: 2,
+    drop_console: false,
+    ecma: 2020,
+  },
+  format: {
+    comments: false,
+  },
+  mangle: true,
+  module: false,
+  ecma: 2020,
+  toplevel: true,
 });
 
-const bundled = await fs.readFile(path.join(distDir, 'products.js'), 'utf8');
-const obfuscated = JavaScriptObfuscator.obfuscate(bundled, {
-  compact: true,
-  controlFlowFlattening: false,
-  debugProtection: false,
-  disableConsoleOutput: true,
-  identifierNamesGenerator: 'hexadecimal',
-  log: false,
-  numbersToExpressions: false,
-  renameGlobals: false,
-  selfDefending: false,
-  seed: 20260614,
-  stringArray: true,
-  stringArrayEncoding: [],
-  stringArrayThreshold: 0.7,
-  transformObjectKeys: true,
-  unicodeEscapeSequence: false,
-  target: 'browser',
-  sourceMap: false,
-  module: true,
-});
-await fs.writeFile(path.join(distDir, 'products.js'), obfuscated.getObfuscatedCode(), 'utf8');
+await fs.writeFile(path.join(distDir, 'products.js'), minified.code, 'utf8');
 
 function minifyHtml(html) {
   return html
+    .replace(/v=[0-9a-z]+/g, `v=${version}`)
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/>\s+</g, '><')
     .replace(/\s{2,}/g, ' ')

@@ -317,11 +317,12 @@ function installSecurityGuards() {
 
 function ensureOrder(products) {
   const counters = new Map();
-  return products.map((product, index) => {
+  const deduped = new Map();
+  products.forEach((product, index) => {
     const section = product.section || 'hot';
     const next = (counters.get(section) || 0) + 1;
     counters.set(section, next);
-    return {
+    const normalized = {
       ...product,
       id: product.id || `${section}-${next}`,
       section,
@@ -333,7 +334,9 @@ function ensureOrder(products) {
       image: product.image || '',
       updatedAt: product.updatedAt || index,
     };
+    deduped.set(normalized.id, normalized);
   });
+  return Array.from(deduped.values());
 }
 
 function seedCatalog() {
@@ -466,29 +469,7 @@ function layoutBoxes(layout) {
 }
 
 function remoteImageForProduct(product) {
-  const name = String(product.nameEn || product.nameAr || 'coffee')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-  const sectionTerms = {
-    hot: 'coffee cup',
-    cold: 'iced coffee glass',
-    specialty: 'iced latte coffee',
-    frappe: 'frappe drink',
-    milkshake: 'milkshake dessert',
-    matcha: 'matcha latte',
-    smoothie: 'fruit smoothie',
-    mohito: 'mojito drink',
-    juice: 'fresh juice',
-    'iced-tea': 'iced tea',
-    tea: 'tea cup',
-    special: 'signature drink',
-    sweets: 'dessert pastry',
-  };
-  const query = `${name} ${sectionTerms[product.section] || 'coffee dessert'}`.trim();
-  const sig = encodeURIComponent(product.id || query);
-  return `https://source.unsplash.com/featured/1200x1200/?${encodeURIComponent(query)}&sig=${sig}`;
+  return `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`;
 }
 
 function mediaForProduct(product, index) {
@@ -505,7 +486,7 @@ function mediaForProduct(product, index) {
       return {
         src: remoteImageForProduct(product),
         focus: `${x.toFixed(1)}% ${y.toFixed(1)}%`,
-        fallback: product.image || `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
+        fallback: product.image || `${PAGE_IMAGE_DIR}/page-${String(group.page).padStart(2, '0')}.jpg`,
       };
     }
     offset -= group.count;
@@ -514,7 +495,7 @@ function mediaForProduct(product, index) {
   return {
     src: remoteImageForProduct(product),
     focus: '50% 50%',
-    fallback: product.image || `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
+    fallback: product.image || `${PAGE_IMAGE_DIR}/page-${String(fallback.page).padStart(2, '0')}.jpg`,
   };
 }
 
