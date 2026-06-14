@@ -8,6 +8,7 @@ const BRANDING_KEY = 'dew.branding.v1';
 const PRODUCT_IMAGE_DIR = './assets/images/products';
 const PAGE_IMAGE_DIR = './assets/images/pages';
 const SITE_STATE_URL = './assets/data/site-state.json';
+const SITE_STATE_DIRTY_KEY = 'dew.site.state.dirty.v1';
 const IDLE_LOGOUT_TIMER_KEY = 'dew.admin.idle.timer.v1';
 const ASSET_VERSION = '__DEW_ASSET_VERSION__';
 
@@ -225,6 +226,7 @@ function loadAdminCodebook() {
 function saveAdminCodebook(entries) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(ADMIN_CODEBOOK_KEY, JSON.stringify(normalizeAdminCodebook(entries)));
+  markSiteStateDirty();
   queueSiteStatePublish();
 }
 
@@ -284,6 +286,7 @@ function loadBranding() {
 function saveBranding(branding) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(BRANDING_KEY, JSON.stringify(normalizeBranding(branding)));
+  markSiteStateDirty();
   queueSiteStatePublish();
 }
 
@@ -291,6 +294,33 @@ function resetBranding() {
   const fresh = normalizeBranding(DEFAULT_BRANDING);
   saveBranding(fresh);
   return fresh;
+}
+
+function markSiteStateDirty() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SITE_STATE_DIRTY_KEY, String(now()));
+  } catch {
+    return;
+  }
+}
+
+function clearSiteStateDirty() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(SITE_STATE_DIRTY_KEY);
+  } catch {
+    return;
+  }
+}
+
+function isSiteStateDirty() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return Number(window.localStorage.getItem(SITE_STATE_DIRTY_KEY) || 0) > 0;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeSiteState(value) {
@@ -326,6 +356,7 @@ async function loadPublishedSiteState() {
   ) {
     return null;
   }
+  if (isSiteStateDirty()) return null;
   try {
     const response = await fetch(SITE_STATE_URL, { cache: 'no-store' });
     if (!response.ok) return null;
@@ -350,6 +381,7 @@ async function publishSiteStateToFolder() {
   if (!projectRootHandle) return false;
   const snapshot = JSON.stringify(buildSiteState(), null, 2);
   await writeTextFile(projectRootHandle, ['assets', 'data', 'site-state.json'], snapshot);
+  clearSiteStateDirty();
   return true;
 }
 
@@ -595,6 +627,7 @@ export function loadProducts() {
 export function saveProducts(products) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ensureOrder(products)));
+  markSiteStateDirty();
   queueSiteStatePublish();
 }
 
