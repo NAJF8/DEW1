@@ -7,6 +7,7 @@ const ADMIN_CODEBOOK_KEY = 'dew.admin.codebook.v1';
 const BRANDING_KEY = 'dew.branding.v1';
 const PRODUCT_IMAGE_DIR = './assets/images/products';
 const PAGE_IMAGE_DIR = './assets/images/pages';
+const SITE_STATE_URL = './assets/data/site-state.json';
 const IDLE_LOGOUT_TIMER_KEY = 'dew.admin.idle.timer.v1';
 const ASSET_VERSION = '__DEW_ASSET_VERSION__';
 
@@ -100,6 +101,9 @@ const DEFAULT_BRANDING = {
   kicker: '',
   addressLines: ['النجف الأشرف', 'حي الأمير', 'شارع كلية التربية للبنات'],
 };
+
+let projectRootHandle = null;
+let projectSyncChain = Promise.resolve();
 
 const esc = (value) =>
   String(value ?? '')
@@ -221,6 +225,7 @@ function loadAdminCodebook() {
 function saveAdminCodebook(entries) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(ADMIN_CODEBOOK_KEY, JSON.stringify(normalizeAdminCodebook(entries)));
+  queueSiteStatePublish();
 }
 
 function addAdminCode(code, label = '') {
@@ -279,12 +284,80 @@ function loadBranding() {
 function saveBranding(branding) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(BRANDING_KEY, JSON.stringify(normalizeBranding(branding)));
+  queueSiteStatePublish();
 }
 
 function resetBranding() {
   const fresh = normalizeBranding(DEFAULT_BRANDING);
   saveBranding(fresh);
   return fresh;
+}
+
+function normalizeSiteState(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    version: Number.isFinite(source.version) ? source.version : 1,
+    updatedAt: Number.isFinite(source.updatedAt) ? source.updatedAt : Date.now(),
+    products: Array.isArray(source.products) ? ensureOrder(source.products) : seedCatalog(),
+    branding: normalizeBranding(source.branding),
+    codebook: normalizeAdminCodebook(source.codebook),
+  };
+}
+
+function buildSiteState() {
+  return normalizeSiteState({
+    version: 1,
+    updatedAt: Date.now(),
+    products: loadProducts(),
+    branding: loadBranding(),
+    codebook: loadAdminCodebook(),
+  });
+}
+
+async function loadPublishedSiteState() {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') return null;
+  const location = window.location || {};
+  if (
+    location.protocol === 'file:' ||
+    !location.hostname ||
+    location.hostname === 'localhost' ||
+    location.hostname === '127.0.0.1' ||
+    location.hostname === '::1'
+  ) {
+    return null;
+  }
+  try {
+    const response = await fetch(SITE_STATE_URL, { cache: 'no-store' });
+    if (!response.ok) return null;
+    return normalizeSiteState(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+async function writeTextFile(directoryHandle, parts, content) {
+  let current = directoryHandle;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    current = await current.getDirectoryHandle(parts[index], { create: true });
+  }
+  const fileHandle = await current.getFileHandle(parts[parts.length - 1], { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+async function publishSiteStateToFolder() {
+  if (!projectRootHandle) return false;
+  const snapshot = JSON.stringify(buildSiteState(), null, 2);
+  await writeTextFile(projectRootHandle, ['assets', 'data', 'site-state.json'], snapshot);
+  return true;
+}
+
+function queueSiteStatePublish() {
+  if (!projectRootHandle) return;
+  projectSyncChain = projectSyncChain
+    .then(() => publishSiteStateToFolder())
+    .catch(() => false);
 }
 
 const SHA256_K = [
@@ -522,6 +595,7 @@ export function loadProducts() {
 export function saveProducts(products) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ensureOrder(products)));
+  queueSiteStatePublish();
 }
 
 export function resetProducts() {
@@ -695,8 +769,7 @@ function popularProducts(products) {
   return result.slice(0, 3);
 }
 
-function buildHeader() {
-  const branding = loadBranding();
+function buildHeader(branding) {
   const logo = branding.logoImage
     ? `<img class="brand-logo-image" src="${esc(versionAssetPath(branding.logoImage))}" alt="${esc(branding.brandName)}">`
     : `<div class="brand-mark">${esc(branding.logoText || DEFAULT_BRANDING.logoText)}</div>`;
@@ -714,8 +787,7 @@ function buildHeader() {
   `;
 }
 
-function buildHero(products) {
-  const branding = loadBranding();
+function buildHero(products, branding) {
   const total = products.length;
   const sections = getSections().length;
   const popularCount = popularProducts(products).length;
@@ -804,17 +876,11 @@ function buildSectionSection(section, products) {
   `;
 }
 
-export function renderMenu(root) {
-  installSecurityGuards();
-  if (typeof document !== 'undefined') {
-    const branding = loadBranding();
-    document.title = branding.brandName || 'DEW Coffee';
-  }
-  const products = loadProducts();
+function renderMenuMarkup(root, products, branding) {
   const sections = getSections();
   const markup = `
-    ${buildHeader()}
-    ${buildHero(products)}
+    ${buildHeader(branding)}
+    ${buildHero(products, branding)}
     ${buildPopularSection(products)}
     ${buildNav()}
     <main class="menu-shell">
@@ -827,6 +893,20 @@ export function renderMenu(root) {
   `;
   root.innerHTML = markup;
   bindMenuInteractions(root);
+}
+
+export function renderMenu(root) {
+  installSecurityGuards();
+  if (typeof document !== 'undefined') document.title = loadBranding().brandName || 'DEW Coffee';
+  const products = loadProducts();
+  const branding = loadBranding();
+  renderMenuMarkup(root, products, branding);
+  void (async () => {
+    const snapshot = await loadPublishedSiteState();
+    if (!snapshot) return;
+    if (typeof document !== 'undefined') document.title = snapshot.branding.brandName || 'DEW Coffee';
+    renderMenuMarkup(root, snapshot.products, snapshot.branding);
+  })();
 
   if (typeof window !== 'undefined' && !window.__dewMenuStorageSync) {
     window.__dewMenuStorageSync = true;
@@ -901,7 +981,7 @@ function adminShell() {
           </div>
         </div>
         <div class="admin-note">
-          Changes are stored locally in the browser and reflected instantly in the menu.
+          Changes are stored locally in the browser and can be published to the project snapshot for GitHub Pages.
         </div>
         <div class="admin-section-nav">
           <button type="button" class="admin-chip" data-jump="editor">Add / Edit</button>
@@ -919,6 +999,7 @@ function adminShell() {
           <div class="admin-actions">
             <button class="ghost-btn" id="resetDefaults">Reset Defaults</button>
             <button class="ghost-btn" id="exportJson">Export JSON</button>
+            <button class="ghost-btn" id="publishSnapshot">Publish Snapshot</button>
             <button class="primary-btn" id="newProduct">New Product</button>
           </div>
         </div>
@@ -1063,6 +1144,9 @@ function adminShell() {
                 <button type="button" class="ghost-btn" id="resetFormState">Load empty form</button>
                 <button type="button" class="ghost-btn" id="refreshCatalog">Refresh catalog</button>
                 <button type="button" class="ghost-btn" id="closeSession">Lock admin</button>
+                <button type="button" class="ghost-btn" id="connectProject">Connect Project Folder</button>
+                <button type="button" class="ghost-btn" id="downloadSnapshot">Download Snapshot</button>
+                <div class="editor-id" id="syncStatus">Project sync is offline</div>
               </div>
             </div>
 
@@ -1262,6 +1346,10 @@ function initAdminApp(app) {
   const resetFormState = app.querySelector('#resetFormState');
   const refreshCatalog = app.querySelector('#refreshCatalog');
   const closeSession = app.querySelector('#closeSession');
+  const publishSnapshot = app.querySelector('#publishSnapshot');
+  const connectProject = app.querySelector('#connectProject');
+  const downloadSnapshot = app.querySelector('#downloadSnapshot');
+  const syncStatus = app.querySelector('#syncStatus');
   const imagePreview = app.querySelector('#imagePreview');
   const editorState = app.querySelector('#editorState');
   const popularList = app.querySelector('#popularList');
@@ -1305,6 +1393,41 @@ function initAdminApp(app) {
   let codebook = loadAdminCodebook();
   let draftImage = '';
   let selectedSectionFilter = '';
+
+  function setSyncStatus(message) {
+    if (syncStatus) syncStatus.textContent = message;
+  }
+
+  async function publishNow(target = 'Snapshot saved') {
+    if (!projectRootHandle) {
+      setSyncStatus('Connect a project folder to publish to GitHub.');
+      return false;
+    }
+    try {
+      await publishSiteStateToFolder();
+      setSyncStatus(target);
+      return true;
+    } catch {
+      setSyncStatus('Publish failed. Reconnect the project folder.');
+      return false;
+    }
+  }
+
+  async function connectProjectFolder() {
+    if (typeof window.showDirectoryPicker !== 'function') {
+      setSyncStatus('Folder publishing is not supported in this browser.');
+      return false;
+    }
+    try {
+      projectRootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      setSyncStatus('Project folder connected.');
+      await publishNow('Snapshot published to project folder.');
+      return true;
+    } catch {
+      setSyncStatus('Project folder not connected.');
+      return false;
+    }
+  }
 
   brandLogoText.value = branding.logoText || '';
   brandName.value = branding.brandName || '';
@@ -1448,6 +1571,7 @@ function initAdminApp(app) {
     saveProducts(current);
     clearDraft();
     refresh();
+    setSyncStatus('Product saved.');
   });
 
   body.addEventListener('click', (event) => {
@@ -1458,6 +1582,7 @@ function initAdminApp(app) {
     if (button.dataset.action === 'delete') {
       deleteProduct(product.id);
       refresh();
+      setSyncStatus('Product deleted.');
       return;
     }
     if (button.dataset.action === 'edit') loadDraft(product);
@@ -1485,6 +1610,7 @@ function initAdminApp(app) {
     resetProducts();
     clearDraft();
     refresh();
+    setSyncStatus('Defaults restored.');
   });
   exportJson.addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(loadProducts(), null, 2)], { type: 'application/json' });
@@ -1494,6 +1620,22 @@ function initAdminApp(app) {
     link.download = 'dew-products.json';
     link.click();
     URL.revokeObjectURL(url);
+  });
+  downloadSnapshot.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(buildSiteState(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'site-state.json';
+    link.click();
+    URL.revokeObjectURL(url);
+    setSyncStatus('Snapshot downloaded.');
+  });
+  publishSnapshot.addEventListener('click', () => {
+    void publishNow('Snapshot published to the connected project folder.');
+  });
+  connectProject.addEventListener('click', () => {
+    void connectProjectFolder();
   });
   closeSession.addEventListener('click', () => {
     setAdminSessionUnlocked(false);
@@ -1516,11 +1658,13 @@ function initAdminApp(app) {
     });
     saveBranding(branding);
     renderBrandingState();
+    setSyncStatus('Branding saved.');
   });
 
   resetBrandingButton.addEventListener('click', () => {
     branding = resetBranding();
     syncBrandForm();
+    setSyncStatus('Branding reset.');
   });
 
   addAccessCodeButton.addEventListener('click', () => {
@@ -1529,6 +1673,7 @@ function initAdminApp(app) {
       newCodeValue.value = '';
       newCodeLabel.value = '';
       renderCodebook();
+      setSyncStatus('Access code added.');
     }
   });
 
@@ -1539,6 +1684,7 @@ function initAdminApp(app) {
     removeAdminCode(button.dataset.codeHash);
     codebook = loadAdminCodebook();
     renderCodebook();
+    setSyncStatus('Access code removed.');
   });
 
   file.addEventListener('change', async () => {
