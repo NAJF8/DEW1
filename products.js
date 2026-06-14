@@ -550,6 +550,12 @@ function adminShell() {
         <div class="admin-note">
           Changes are stored locally in the browser and reflected instantly in the menu.
         </div>
+        <div class="admin-section-nav">
+          <button class="admin-chip" data-jump="editor">Add / Edit</button>
+          <button class="admin-chip" data-jump="catalog">Catalog</button>
+          <button class="admin-chip" data-jump="popular">Most Popular</button>
+          <button class="admin-chip" data-jump="settings">Settings</button>
+        </div>
       </aside>
       <section class="admin-main">
         <div class="admin-topbar">
@@ -563,7 +569,7 @@ function adminShell() {
             <button class="primary-btn" id="newProduct">New Product</button>
           </div>
         </div>
-        <div class="mini-stats">
+        <div class="admin-stats-grid">
           <div class="mini-stat">
             <span>Total items</span>
             <strong id="adminTotal">0</strong>
@@ -576,11 +582,31 @@ function adminShell() {
             <span>Custom items</span>
             <strong id="adminCustom">0</strong>
           </div>
+          <div class="mini-stat">
+            <span>Sections</span>
+            <strong id="adminSections">0</strong>
+          </div>
         </div>
 
         <div class="admin-grid">
-          <form class="card panel" id="productForm">
+          <form class="card panel editor-panel" id="productForm">
+            <div class="panel-head" id="editor">
+              <div>
+                <h3>Add / Edit Product</h3>
+                <p>Update name, price, image, section, or popular flag.</p>
+              </div>
+              <div class="editor-id" id="editorState">New item</div>
+            </div>
             <input type="hidden" id="productId">
+            <div class="preview-shell">
+              <div class="preview-frame">
+                <img id="imagePreview" alt="Preview" src="${PAGE_IMAGE_DIR}/page-44.jpg">
+              </div>
+              <div class="preview-meta">
+                <strong>Live preview</strong>
+                <span>Upload a file or paste a path and it updates instantly.</span>
+              </div>
+            </div>
             <label>
               Arabic Name
               <input id="nameAr" type="text" required>
@@ -619,19 +645,31 @@ function adminShell() {
               Upload image
               <input id="file" type="file" accept="image/*">
             </label>
+            <div class="inline-fields">
+              <label class="check">
+                <input id="clearImage" type="checkbox">
+                <span>Reset image to PDF crop</span>
+              </label>
+            </div>
             <div class="form-actions">
               <button type="submit" class="primary-btn">Save Product</button>
               <button type="button" class="ghost-btn" id="clearForm">Clear</button>
             </div>
           </form>
 
-          <div class="card panel table-panel">
+          <div class="right-stack">
+            <div class="card panel table-panel" id="catalog">
             <div class="panel-head">
               <div>
                 <h3>Catalog</h3>
-                <p>Built-in items plus anything added from this screen.</p>
+                <p>Built-in items plus anything added from this screen. Click Edit to load an item back into the form.</p>
               </div>
-              <input id="search" class="search" type="search" placeholder="Search products...">
+              <div class="search-stack">
+                <select id="sectionFilter" class="search">
+                  <option value="">All sections</option>
+                </select>
+                <input id="search" class="search" type="search" placeholder="Search products...">
+              </div>
             </div>
             <div class="table-wrap">
               <table class="admin-table">
@@ -648,6 +686,31 @@ function adminShell() {
                 </thead>
                 <tbody id="catalogBody"></tbody>
               </table>
+            </div>
+          </div>
+
+            <div class="card panel popular-panel" id="popular">
+              <div class="panel-head">
+                <div>
+                  <h3>Most Popular</h3>
+                  <p>These items are pinned to the top menu section and can be changed anytime.</p>
+                </div>
+              </div>
+              <div id="popularList" class="popular-admin-list"></div>
+            </div>
+
+            <div class="card panel settings-panel" id="settings">
+              <div class="panel-head">
+                <div>
+                  <h3>Settings</h3>
+                  <p>Quick controls for the current browser session.</p>
+                </div>
+              </div>
+              <div class="settings-grid">
+                <button type="button" class="ghost-btn" id="resetFormState">Load empty form</button>
+                <button type="button" class="ghost-btn" id="refreshCatalog">Refresh catalog</button>
+                <button type="button" class="ghost-btn" id="closeSession">Lock admin</button>
+              </div>
             </div>
           </div>
         </div>
@@ -707,6 +770,7 @@ function initAdminApp(app) {
   const form = app.querySelector('#productForm');
   const body = app.querySelector('#catalogBody');
   const search = app.querySelector('#search');
+  const sectionFilter = app.querySelector('#sectionFilter');
   const sectionSelect = app.querySelector('#section');
   const idInput = app.querySelector('#productId');
   const nameAr = app.querySelector('#nameAr');
@@ -717,32 +781,57 @@ function initAdminApp(app) {
   const wide = app.querySelector('#wide');
   const image = app.querySelector('#image');
   const file = app.querySelector('#file');
+  const clearImage = app.querySelector('#clearImage');
   const clearForm = app.querySelector('#clearForm');
   const newProduct = app.querySelector('#newProduct');
   const resetDefaults = app.querySelector('#resetDefaults');
   const exportJson = app.querySelector('#exportJson');
+  const resetFormState = app.querySelector('#resetFormState');
+  const refreshCatalog = app.querySelector('#refreshCatalog');
+  const closeSession = app.querySelector('#closeSession');
+  const imagePreview = app.querySelector('#imagePreview');
+  const editorState = app.querySelector('#editorState');
+  const popularList = app.querySelector('#popularList');
   const totalStat = app.querySelector('#adminTotal');
   const popularStat = app.querySelector('#adminPopular');
   const customStat = app.querySelector('#adminCustom');
+  const sectionsStat = app.querySelector('#adminSections');
+  const sectionJumpButtons = app.querySelectorAll('[data-jump]');
 
   sectionSelect.innerHTML = getSections()
     .map((section) => `<option value="${esc(section.id)}">${esc(section.ar)} (${esc(section.en)})</option>`)
     .join('');
+  sectionFilter.innerHTML += getSections()
+    .map((section) => `<option value="${esc(section.id)}">${esc(section.ar)}</option>`)
+    .join('');
 
   let products = loadProducts();
   let draftImage = '';
+  let selectedSectionFilter = '';
 
   function refresh() {
     products = loadProducts();
     const query = search.value.trim().toLowerCase();
     const filtered = products.filter((product) => {
       const hay = `${product.nameAr} ${product.nameEn} ${product.section}`.toLowerCase();
-      return !query || hay.includes(query);
+      const sectionMatch = !selectedSectionFilter || product.section === selectedSectionFilter;
+      return sectionMatch && (!query || hay.includes(query));
     });
     body.innerHTML = filtered.map((product) => productRow(product)).join('');
     totalStat.textContent = String(products.length);
     popularStat.textContent = String(products.filter((product) => product.popular).length);
     customStat.textContent = String(products.filter((product) => product.custom).length);
+    sectionsStat.textContent = String(getSections().length);
+    popularList.innerHTML = popularProducts(products)
+      .map(
+        (product) => `
+          <button type="button" class="popular-pill" data-load-id="${esc(product.id)}">
+            <span>${esc(product.nameAr || product.nameEn)}</span>
+            <small>${esc(product.price || '')}</small>
+          </button>
+        `
+      )
+      .join('');
   }
 
   function clearDraft() {
@@ -750,10 +839,13 @@ function initAdminApp(app) {
     form.reset();
     draftImage = '';
     image.value = '';
+    clearImage.checked = false;
     sectionSelect.value = 'hot';
     popular.checked = false;
     premium.checked = false;
     wide.checked = false;
+    editorState.textContent = 'New item';
+    imagePreview.src = `${PAGE_IMAGE_DIR}/page-44.jpg`;
   }
 
   function loadDraft(product) {
@@ -767,9 +859,13 @@ function initAdminApp(app) {
     wide.checked = Boolean(product.wide);
     image.value = product.image || '';
     draftImage = product.image || '';
+    clearImage.checked = false;
+    editorState.textContent = `Editing: ${product.nameEn || product.id}`;
+    imagePreview.src = mediaForProduct(product, 0).src || `${PAGE_IMAGE_DIR}/page-44.jpg`;
   }
 
   function getDraft() {
+    const imageValue = clearImage.checked ? '' : (draftImage || image.value.trim());
     return {
       id: idInput.value || `${sectionSelect.value}-${slugify(nameEn.value || nameAr.value)}-${Date.now()}`,
       nameAr: nameAr.value.trim(),
@@ -779,7 +875,7 @@ function initAdminApp(app) {
       popular: popular.checked,
       premium: premium.checked,
       wide: wide.checked,
-      image: draftImage || image.value.trim(),
+      image: imageValue,
       custom: true,
     };
   }
@@ -809,9 +905,23 @@ function initAdminApp(app) {
     if (button.dataset.action === 'edit') loadDraft(product);
   });
 
+  popularList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-load-id]');
+    if (!button) return;
+    const product = loadProducts().find((item) => item.id === button.dataset.loadId);
+    if (product) loadDraft(product);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
   search.addEventListener('input', refresh);
+  sectionFilter.addEventListener('change', () => {
+    selectedSectionFilter = sectionFilter.value;
+    refresh();
+  });
   newProduct.addEventListener('click', clearDraft);
   clearForm.addEventListener('click', clearDraft);
+  resetFormState.addEventListener('click', clearDraft);
+  refreshCatalog.addEventListener('click', refresh);
   resetDefaults.addEventListener('click', () => {
     if (!window.confirm('Reset all products to the default menu?')) return;
     resetProducts();
@@ -827,6 +937,10 @@ function initAdminApp(app) {
     link.click();
     URL.revokeObjectURL(url);
   });
+  closeSession.addEventListener('click', () => {
+    setAdminSessionUnlocked(false);
+    window.location.reload();
+  });
 
   file.addEventListener('change', async () => {
     const selected = file.files && file.files[0];
@@ -835,12 +949,36 @@ function initAdminApp(app) {
     reader.onload = () => {
       draftImage = String(reader.result || '');
       image.value = draftImage;
+      clearImage.checked = false;
+      imagePreview.src = draftImage;
     };
     reader.readAsDataURL(selected);
   });
 
   image.addEventListener('input', () => {
     draftImage = image.value.trim();
+    if (draftImage) {
+      clearImage.checked = false;
+      imagePreview.src = draftImage;
+    }
+  });
+
+  clearImage.addEventListener('change', () => {
+    if (clearImage.checked) {
+      draftImage = '';
+      image.value = '';
+      imagePreview.src = `${PAGE_IMAGE_DIR}/page-44.jpg`;
+    } else {
+      const current = image.value.trim();
+      imagePreview.src = current || `${PAGE_IMAGE_DIR}/page-44.jpg`;
+    }
+  });
+
+  sectionJumpButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const target = app.querySelector(`#${button.dataset.jump}`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   });
 
   refresh();
