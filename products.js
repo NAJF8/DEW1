@@ -904,10 +904,10 @@ function adminShell() {
           Changes are stored locally in the browser and reflected instantly in the menu.
         </div>
         <div class="admin-section-nav">
-          <button class="admin-chip" data-jump="editor">Add / Edit</button>
-          <button class="admin-chip" data-jump="catalog">Catalog</button>
-          <button class="admin-chip" data-jump="popular">Most Popular</button>
-          <button class="admin-chip" data-jump="settings">Settings</button>
+          <button type="button" class="admin-chip" data-jump="editor">Add / Edit</button>
+          <button type="button" class="admin-chip" data-jump="catalog">Catalog</button>
+          <button type="button" class="admin-chip" data-jump="popular">Most Popular</button>
+          <button type="button" class="admin-chip" data-jump="settings">Settings</button>
         </div>
       </aside>
       <section class="admin-main">
@@ -1300,13 +1300,25 @@ function initAdminApp(app) {
   sectionFilter.innerHTML += getSections()
     .map((section) => `<option value="${esc(section.id)}">${esc(section.ar)}</option>`)
     .join('');
-  syncBrandForm();
-
   let products = loadProducts();
   let branding = loadBranding();
   let codebook = loadAdminCodebook();
   let draftImage = '';
   let selectedSectionFilter = '';
+
+  brandLogoText.value = branding.logoText || '';
+  brandName.value = branding.brandName || '';
+  brandSub.value = branding.brandSub || '';
+  heroTitle.value = branding.heroTitle || '';
+  heroCopy.value = branding.heroCopy || '';
+  brandRibbon.value = branding.ribbon || '';
+  brandKicker.value = branding.kicker || '';
+  address1.value = branding.addressLines[0] || '';
+  address2.value = branding.addressLines[1] || '';
+  address3.value = branding.addressLines[2] || '';
+  brandLogoImage.value = branding.logoImage || '';
+  brandHeroImage.value = branding.heroImage || '';
+  renderBrandingState();
 
   function refresh() {
     products = loadProducts();
