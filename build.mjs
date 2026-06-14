@@ -23,7 +23,9 @@ const bundle = [
   '(function(){',
   stripModuleSyntax(configSource),
   stripModuleSyntax(dataSource),
-  stripModuleSyntax(appSource).replace(/^\s*const\s+root\s*=\s*process\.cwd\(\);\s*$/gm, ''),
+  stripModuleSyntax(appSource)
+    .replace(/^\s*const\s+root\s*=\s*process\.cwd\(\);\s*$/gm, '')
+    .replace(/__DEW_ASSET_VERSION__/g, version),
   'window.DEW = { slugify, loadProducts, saveProducts, resetProducts, upsertProduct, deleteProduct, getSections, renderMenu, renderAdmin };',
   '})();',
 ].join('\n');

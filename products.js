@@ -6,6 +6,7 @@ const ADMIN_SESSION_KEY = 'dew.admin.unlocked.v1';
 const PRODUCT_IMAGE_DIR = './assets/images/products';
 const PAGE_IMAGE_DIR = './assets/images/pages';
 const IDLE_LOGOUT_TIMER_KEY = 'dew.admin.idle.timer.v1';
+const ASSET_VERSION = '__DEW_ASSET_VERSION__';
 
 const SECTION_ORDER = [
   'popular',
@@ -78,7 +79,7 @@ const DEFAULT_EXTRA_PRODUCTS = [
     wide: false,
     popular: true,
     custom: true,
-    image: `${PRODUCT_IMAGE_DIR}/cold-iced-coffee.jpg`,
+    image: versionAssetPath(`${PRODUCT_IMAGE_DIR}/cold-iced-coffee.jpg`),
     order: 999,
   },
 ];
@@ -92,6 +93,17 @@ const esc = (value) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+function versionAssetPath(value) {
+  const url = String(value ?? '');
+  if (!url) return url;
+  if (/^(data:|blob:|https?:|javascript:)/i.test(url)) return url;
+  const [base, hash = ''] = url.split('#');
+  if (/[?&]v=/.test(base)) return hash ? `${base}#${hash}` : base;
+  const joiner = base.includes('?') ? '&' : '?';
+  const versioned = `${base}${joiner}v=${ASSET_VERSION}`;
+  return hash ? `${versioned}#${hash}` : versioned;
+}
 
 export function slugify(value) {
   return String(value ?? '')
@@ -469,11 +481,11 @@ function layoutBoxes(layout) {
 }
 
 function remoteImageForProduct(product) {
-  return `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`;
+  return versionAssetPath(`${PRODUCT_IMAGE_DIR}/${product.id}.jpg`);
 }
 
 function mediaForProduct(product, index) {
-  if (product.custom && product.image) return { src: product.image, focus: '50% 45%' };
+  if (product.custom && product.image) return { src: versionAssetPath(product.image), focus: '50% 45%' };
   const groups = SECTION_VISUALS[product.section] || [{ page: 44, layout: 'grid9', count: 9 }];
   let offset = index;
   for (const group of groups) {
@@ -486,7 +498,7 @@ function mediaForProduct(product, index) {
       return {
         src: remoteImageForProduct(product),
         focus: `${x.toFixed(1)}% ${y.toFixed(1)}%`,
-        fallback: product.image || `${PAGE_IMAGE_DIR}/page-${String(group.page).padStart(2, '0')}.jpg`,
+        fallback: versionAssetPath(product.image || `${PAGE_IMAGE_DIR}/page-${String(group.page).padStart(2, '0')}.jpg`),
       };
     }
     offset -= group.count;
@@ -495,7 +507,7 @@ function mediaForProduct(product, index) {
   return {
     src: remoteImageForProduct(product),
     focus: '50% 50%',
-    fallback: product.image || `${PAGE_IMAGE_DIR}/page-${String(fallback.page).padStart(2, '0')}.jpg`,
+    fallback: versionAssetPath(product.image || `${PAGE_IMAGE_DIR}/page-${String(fallback.page).padStart(2, '0')}.jpg`),
   };
 }
 
@@ -716,7 +728,7 @@ function productRow(product) {
     <tr data-product-id="${esc(product.id)}">
       <td>
         <div class="table-preview">
-          <img src="${esc(mediaForProduct(product, 0).src)}" alt="${esc(product.nameEn || product.nameAr)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PAGE_IMAGE_DIR}/page-44.jpg'">
+          <img src="${esc(mediaForProduct(product, 0).src)}" alt="${esc(product.nameEn || product.nameAr)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`)}'">
         </div>
       </td>
       <td>
@@ -799,7 +811,7 @@ function adminShell() {
             <input type="hidden" id="productId">
             <div class="preview-shell">
               <div class="preview-frame">
-                <img id="imagePreview" alt="Preview" src="${PAGE_IMAGE_DIR}/page-44.jpg">
+                <img id="imagePreview" alt="Preview" src="${versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`)}">
               </div>
               <div class="preview-meta">
                 <strong>Live preview</strong>
@@ -1058,7 +1070,7 @@ function initAdminApp(app) {
     premium.checked = false;
     wide.checked = false;
     editorState.textContent = 'New item';
-    imagePreview.src = `${PAGE_IMAGE_DIR}/page-44.jpg`;
+    imagePreview.src = versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`);
   }
 
   function loadDraft(product) {
@@ -1074,7 +1086,7 @@ function initAdminApp(app) {
     draftImage = product.image || '';
     clearImage.checked = false;
     editorState.textContent = `Editing: ${product.nameEn || product.id}`;
-    imagePreview.src = mediaForProduct(product, 0).src || `${PAGE_IMAGE_DIR}/page-44.jpg`;
+    imagePreview.src = mediaForProduct(product, 0).src || versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`);
   }
 
   function getDraft() {
@@ -1181,10 +1193,10 @@ function initAdminApp(app) {
     if (clearImage.checked) {
       draftImage = '';
       image.value = '';
-      imagePreview.src = `${PAGE_IMAGE_DIR}/page-44.jpg`;
+      imagePreview.src = versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`);
     } else {
       const current = image.value.trim();
-      imagePreview.src = current || `${PAGE_IMAGE_DIR}/page-44.jpg`;
+      imagePreview.src = current ? versionAssetPath(current) : versionAssetPath(`${PAGE_IMAGE_DIR}/page-44.jpg`);
     }
   });
 
