@@ -1,10 +1,11 @@
+import { ADMIN_CONFIG } from './config/admin.config.js';
 import { seedProducts } from './products-data.js';
 
 const STORAGE_KEY = 'dew.products.v1';
 const ADMIN_SESSION_KEY = 'dew.admin.unlocked.v1';
-const ADMIN_CODE = 'DEW2026';
 const PRODUCT_IMAGE_DIR = './assets/images/products';
 const PAGE_IMAGE_DIR = './assets/images/pages';
+const IDLE_LOGOUT_TIMER_KEY = 'dew.admin.idle.timer.v1';
 
 const SECTION_ORDER = [
   'popular',
@@ -106,22 +107,127 @@ function clone(value) {
 }
 
 function getAdminSessionUnlocked() {
-  if (typeof window === 'undefined') return false;
+  return Boolean(getAdminSessionRecord());
+}
+
+function now() {
+  return Date.now();
+}
+
+function getAdminSessionRecord() {
+  if (typeof window === 'undefined') return null;
   try {
-    return window.sessionStorage.getItem(ADMIN_SESSION_KEY) === '1';
+    const raw = window.sessionStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return null;
+    const record = JSON.parse(raw);
+    if (!record || typeof record !== 'object') return null;
+    if (!Number.isFinite(record.expiresAt) || record.expiresAt <= now()) return null;
+    if (record.token !== `${ADMIN_CONFIG.sessionTokenPrefix}:${record.expiresAt}`) return null;
+    return record;
   } catch {
-    return false;
+    return null;
   }
 }
 
-function setAdminSessionUnlocked(value) {
+function setAdminSessionUnlocked(value, ttl = ADMIN_CONFIG.sessionTtlMs) {
   if (typeof window === 'undefined') return;
   try {
-    if (value) window.sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
-    else window.sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    if (!value) {
+      window.sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      return;
+    }
+    const expiresAt = now() + ttl;
+    const payload = { expiresAt, token: ADMIN_CONFIG.sessionTokenPrefix + ':' + expiresAt };
+    window.sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(payload));
   } catch {
-    // Session storage may be unavailable in restricted contexts.
+    return;
   }
+}
+
+async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(String(input));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPassword(value) {
+  return sha256Hex(`${ADMIN_CONFIG.salt}:${value}`);
+}
+
+async function verifyAdminPassword(value) {
+  return (await hashPassword(value)) === ADMIN_CONFIG.passwordHash;
+}
+
+function markActivity() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(IDLE_LOGOUT_TIMER_KEY, String(now()));
+  } catch {
+    return;
+  }
+}
+
+function clearIdleTimer() {
+  if (typeof window === 'undefined') return;
+  if (window.__dewAdminIdleTimer) {
+    window.clearTimeout(window.__dewAdminIdleTimer);
+    window.__dewAdminIdleTimer = null;
+  }
+}
+
+function syncIdleTimer(onExpire) {
+  if (typeof window === 'undefined') return;
+  clearIdleTimer();
+  const timeout = Math.max(60_000, Number(ADMIN_CONFIG.idleLogoutMs) || 20 * 60_000);
+  const tick = () => {
+    const last = Number(window.sessionStorage.getItem(IDLE_LOGOUT_TIMER_KEY) || now());
+    const remaining = Math.max(0, timeout - (now() - last));
+    clearIdleTimer();
+    window.__dewAdminIdleTimer = window.setTimeout(() => {
+      onExpire();
+    }, remaining);
+  };
+  tick();
+  ['pointerdown', 'keydown', 'scroll', 'mousemove', 'touchstart'].forEach((eventName) => {
+    window.addEventListener(
+      eventName,
+      () => {
+        markActivity();
+        tick();
+      },
+      { passive: true, capture: true }
+    );
+  });
+}
+
+function installSecurityGuards() {
+  if (typeof window === 'undefined') return;
+  if (window.__dewSecurityGuardsInstalled) return;
+  window.__dewSecurityGuardsInstalled = true;
+  window.addEventListener(
+    'contextmenu',
+    (event) => {
+      event.preventDefault();
+    },
+    { capture: true }
+  );
+  window.addEventListener(
+    'keydown',
+    (event) => {
+      const key = String(event.key || '').toLowerCase();
+      const ctrl = event.ctrlKey || event.metaKey;
+      const shift = event.shiftKey;
+      const blocked =
+        key === 'f12' ||
+        (ctrl && shift && (key === 'i' || key === 'j' || key === 'c')) ||
+        (ctrl && key === 'u');
+      if (blocked) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    { capture: true }
+  );
 }
 
 function ensureOrder(products) {
@@ -457,6 +563,7 @@ function buildSectionSection(section, products) {
 }
 
 export function renderMenu(root) {
+  installSecurityGuards();
   const products = loadProducts();
   const sections = getSections();
   const markup = `
@@ -720,6 +827,7 @@ function adminShell() {
 }
 
 export function renderAdmin(root) {
+  installSecurityGuards();
   const mountApp = () => {
     root.innerHTML = adminShell();
     initAdminApp(root);
@@ -727,6 +835,10 @@ export function renderAdmin(root) {
 
   if (getAdminSessionUnlocked()) {
     mountApp();
+    syncIdleTimer(() => {
+      setAdminSessionUnlocked(false);
+      window.location.reload();
+    });
     return;
   }
 
@@ -747,17 +859,22 @@ export function renderAdmin(root) {
   const codeInput = root.querySelector('#adminCode');
   const unlockButton = root.querySelector('#unlockAdmin');
 
-  const unlock = () => {
-    if (codeInput.value.trim() !== ADMIN_CODE) {
+  const unlock = async () => {
+    if (!(await verifyAdminPassword(codeInput.value.trim()))) {
       codeInput.focus();
       codeInput.select();
       return;
     }
     setAdminSessionUnlocked(true);
+    markActivity();
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
     lock?.remove();
     mountApp();
+    syncIdleTimer(() => {
+      setAdminSessionUnlocked(false);
+      window.location.reload();
+    });
   };
 
   unlockButton.addEventListener('click', unlock);
@@ -767,6 +884,10 @@ export function renderAdmin(root) {
 }
 
 function initAdminApp(app) {
+  if (!getAdminSessionUnlocked()) {
+    app.innerHTML = '';
+    return;
+  }
   const form = app.querySelector('#productForm');
   const body = app.querySelector('#catalogBody');
   const search = app.querySelector('#search');
@@ -939,6 +1060,7 @@ function initAdminApp(app) {
   });
   closeSession.addEventListener('click', () => {
     setAdminSessionUnlocked(false);
+    clearIdleTimer();
     window.location.reload();
   });
 

@@ -1,3 +1,6 @@
 DEW/
 crop_check.jpg
 dew-http*.log
+node_modules/
+pdf_images/*.jpg
+pdf_images/*.webp
