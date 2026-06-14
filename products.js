@@ -1,7 +1,10 @@
 import { seedProducts } from './products-data.js';
 
 const STORAGE_KEY = 'dew.products.v1';
+const ADMIN_SESSION_KEY = 'dew.admin.unlocked.v1';
 const ADMIN_CODE = 'DEW2026';
+const PRODUCT_IMAGE_DIR = './assets/images/products';
+const PAGE_IMAGE_DIR = './assets/images/pages';
 
 const SECTION_ORDER = [
   'popular',
@@ -74,7 +77,7 @@ const DEFAULT_EXTRA_PRODUCTS = [
     wide: false,
     popular: true,
     custom: true,
-    image: './product-crops/cold-iced-coffee.jpg',
+    image: `${PRODUCT_IMAGE_DIR}/cold-iced-coffee.jpg`,
     order: 999,
   },
 ];
@@ -100,6 +103,25 @@ export function slugify(value) {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function getAdminSessionUnlocked() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.sessionStorage.getItem(ADMIN_SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setAdminSessionUnlocked(value) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value) window.sessionStorage.setItem(ADMIN_SESSION_KEY, '1');
+    else window.sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  } catch {
+    // Session storage may be unavailable in restricted contexts.
+  }
 }
 
 function ensureOrder(products) {
@@ -264,18 +286,18 @@ function mediaForProduct(product, index) {
       const x = (((x1 + x2) / 2) / 1178) * 100;
       const y = (((y1 + y2) / 2) / 2560) * 100;
       return {
-        src: `./product-crops/${product.id}.jpg`,
+        src: `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
         focus: `${x.toFixed(1)}% ${y.toFixed(1)}%`,
-        fallback: `./pdf_images/obj-${group.page}.jpg`,
+        fallback: `${PAGE_IMAGE_DIR}/page-${String(group.page).padStart(2, '0')}.jpg`,
       };
     }
     offset -= group.count;
   }
   const fallback = groups[groups.length - 1] || { page: 44 };
   return {
-    src: `./product-crops/${product.id}.jpg`,
+    src: `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
     focus: '50% 50%',
-    fallback: `./pdf_images/obj-${fallback.page}.jpg`,
+    fallback: `${PAGE_IMAGE_DIR}/page-${String(fallback.page).padStart(2, '0')}.jpg`,
   };
 }
 
@@ -495,7 +517,7 @@ function productRow(product) {
     <tr data-product-id="${esc(product.id)}">
       <td>
         <div class="table-preview">
-          <img src="${esc(mediaForProduct(product, 0).src)}" alt="${esc(product.nameEn || product.nameAr)}" loading="lazy" onerror="this.onerror=null;this.src='./pdf_images/obj-44.jpg'">
+          <img src="${esc(mediaForProduct(product, 0).src)}" alt="${esc(product.nameEn || product.nameAr)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${PAGE_IMAGE_DIR}/page-44.jpg'">
         </div>
       </td>
       <td>
@@ -635,20 +657,30 @@ function adminShell() {
 }
 
 export function renderAdmin(root) {
+  const mountApp = () => {
+    root.innerHTML = adminShell();
+    initAdminApp(root);
+  };
+
+  if (getAdminSessionUnlocked()) {
+    mountApp();
+    return;
+  }
+
   root.innerHTML = `
-    <div class="admin-lock" id="adminLock">
+    <div class="admin-lock" id="adminLock" aria-modal="true" role="dialog">
       <div class="card lock-card">
         <h2>Admin Access</h2>
         <p>Enter the manager code to unlock editing.</p>
-        <input id="adminCode" type="password" placeholder="Manager code">
+        <input id="adminCode" type="password" placeholder="Manager code" autocomplete="one-time-code">
         <button class="primary-btn" id="unlockAdmin">Unlock</button>
       </div>
     </div>
-    <div id="adminApp" hidden>${adminShell()}</div>
   `;
+  document.body.style.overflow = 'hidden';
+  document.documentElement.style.overflow = 'hidden';
 
   const lock = root.querySelector('#adminLock');
-  const app = root.querySelector('#adminApp');
   const codeInput = root.querySelector('#adminCode');
   const unlockButton = root.querySelector('#unlockAdmin');
 
@@ -658,9 +690,11 @@ export function renderAdmin(root) {
       codeInput.select();
       return;
     }
-    lock.hidden = true;
-    app.hidden = false;
-    initAdminApp(app);
+    setAdminSessionUnlocked(true);
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+    lock?.remove();
+    mountApp();
   };
 
   unlockButton.addEventListener('click', unlock);
