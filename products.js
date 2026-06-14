@@ -492,7 +492,7 @@ function remoteImageForProduct(product) {
 }
 
 function mediaForProduct(product, index) {
-  if (product.image) return { src: product.image, focus: '50% 45%' };
+  if (product.custom && product.image) return { src: product.image, focus: '50% 45%' };
   const groups = SECTION_VISUALS[product.section] || [{ page: 44, layout: 'grid9', count: 9 }];
   let offset = index;
   for (const group of groups) {
@@ -505,7 +505,7 @@ function mediaForProduct(product, index) {
       return {
         src: remoteImageForProduct(product),
         focus: `${x.toFixed(1)}% ${y.toFixed(1)}%`,
-        fallback: `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
+        fallback: product.image || `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
       };
     }
     offset -= group.count;
@@ -514,7 +514,7 @@ function mediaForProduct(product, index) {
   return {
     src: remoteImageForProduct(product),
     focus: '50% 50%',
-    fallback: `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
+    fallback: product.image || `${PRODUCT_IMAGE_DIR}/${product.id}.jpg`,
   };
 }
 
